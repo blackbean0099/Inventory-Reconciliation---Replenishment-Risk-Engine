@@ -1,0 +1,5 @@
+warehouse_id_raw,warehouse_name_raw,region_raw,timezone_raw,capacity_units_raw,active_flag_raw,source_system,record_updated_at,ingestion_timestamp,batch_id
+WH-LKO-01,Lucknow Hub,UP,Asia/Kolkata,50000,True,ERP_MDM,2025-01-01 02:53:00,2026-08-05 02:59:59,BATCH_202501_RAW_WAREHOUSE_MASTER
+WH-DEL-02,Delhi Central,NCR,Asia/Kolkata,120000,True,ERP_MDM,2025-01-01 01:15:00,2026-08-05 02:59:59,BATCH_202501_RAW_WAREHOUSE_MASTER
+WH-MUM-03,Mumbai Dock,MH,Asia/Kolkata,85000,True,ERP_MDM,2025-01-01 02:32:00,2026-08-05 02:59:59,BATCH_202501_RAW_WAREHOUSE_MASTER
+WH-BLR-04,Bangalore Tech,KA,Asia/Kolkata,60000,True,ERP_MDM,2025-01-01 00:41:00,2026-08-05 02:59:59,BATCH_202501_RAW_WAREHOUSE_MASTER

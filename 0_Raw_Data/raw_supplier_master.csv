@@ -1,0 +1,9 @@
+supplier_id_raw,supplier_name_raw,country_raw,timezone_raw,status_raw,source_system,record_updated_at,ingestion_timestamp,batch_id
+SUP-001,Boone Kerr and Ryan Manufacturing,China,Asia/Shanghai,ACTIVE,ERP_MDM,2025-01-01 01:31:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-002,Mcdonald-Alvarado Manufacturing,Vietnam,Asia/Ho_Chi_Minh,ACTIVE,ERP_MDM,2025-01-01 01:29:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-003,Guzman LLC Manufacturing,USA,America/New_York,ACTIVE,ERP_MDM,2025-01-01 01:10:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-004,Schwartz-Lewis Manufacturing,Taiwan,Asia/Taipei,ACTIVE,ERP_MDM,2025-01-01 02:17:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-005,Jones-Lee Manufacturing,Germany,Europe/Berlin,ACTIVE,ERP_MDM,2025-01-01 00:11:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-006,Wallace PLC Manufacturing,India,Asia/Kolkata,ACTIVE,ERP_MDM,2025-01-01 02:18:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-007,Lee-Hartman Manufacturing,China,Asia/Shanghai,ACTIVE,ERP_MDM,2025-01-01 02:17:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
+SUP-008,Walsh Group Manufacturing,India,Asia/Kolkata,ACTIVE,ERP_MDM,2025-01-01 02:07:00,2026-08-05 02:59:59,BATCH_202501_RAW_SUPPLIER_MASTER
