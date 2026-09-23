@@ -11,6 +11,9 @@
 
 --_________________________________________________________________________________________________________________________________________________________________
 
+CREATE OR REPLACE VIEW `clean.clean_fulfillments` AS
+
+
 WITH fixed_fulfillments AS (
     SELECT
         UPPER(TRIM(order_id_raw)) AS order_id,
@@ -193,7 +196,7 @@ clean_fulfillments AS (
         ingestion_timestamp_cleaned,
         clean_batch_id,
         CASE
-            WHEN order_id IS NULL THEN FALSE
+            WHEN order_id IS NULL OR order_id = '' THEN FALSE
             WHEN order_line IS NULL THEN FALSE
             WHEN qty IS NULL THEN FALSE
             WHEN event_timestamp IS NULL THEN FALSE
@@ -202,7 +205,7 @@ clean_fulfillments AS (
             ELSE TRUE
         END AS is_valid_record,
         CASE
-            WHEN order_id IS NULL THEN 'MISSING_ORDER_ID'
+            WHEN order_id IS NULL OR order_id = '' THEN 'MISSING_ORDER_ID'
             WHEN order_line IS NULL THEN 'INVALID_ORDER_LINE'
             WHEN qty IS NULL THEN 'INVALID_QUANTITY'
             WHEN event_timestamp IS NULL THEN 'MISSING_EVENT_TIMESTAMP'
