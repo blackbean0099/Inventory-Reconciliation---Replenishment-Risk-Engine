@@ -1,6 +1,6 @@
 /*
  =========================================
- THE PROBLEMS (raw.movements)
+ THE PROBLEMS 
  =========================================
  • The Time Trap: Movement timestamps came in 10 different formats (Unix, Excel, ISO).
  • Ghost Locations: The system sometimes output the string "N/A" or empty strings "" instead of a true SQL NULL for missing warehouses or reference IDs.
