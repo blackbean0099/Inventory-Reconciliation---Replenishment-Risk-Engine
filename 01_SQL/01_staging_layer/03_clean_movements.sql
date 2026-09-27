@@ -208,7 +208,9 @@ cleaned_movements AS (
         clean_ingestion_timestamp,
         clean_batch_id,
         CASE
-            WHEN movement_id IS NULL THEN FALSE
+        WHEN movement_type IN ('SALE', 'TRANSFER_OUT', 'DAMAGE') AND quantity > 0 THEN FALSE
+        WHEN movement_type IN ('OPENING_BALANCE', 'RECEIPT', 'TRANSFER_IN', 'RETURN') AND quantity < 0 THEN FALSE
+            WHEN movement_id IS NULL OR movement_id = '' THEN FALSE
             WHEN movement_timestamp IS NULL THEN FALSE
             WHEN sku_id IS NULL THEN FALSE
             
@@ -219,7 +221,9 @@ cleaned_movements AS (
             ELSE TRUE
         END AS is_valid_record,
         CASE
-            WHEN movement_id IS NULL THEN 'INVALID_OR_MISSING_MOVEMENT_ID'
+        WHEN movement_type IN ('SALE', 'TRANSFER_OUT', 'DAMAGE') AND quantity > 0 THEN 'INVALID_POSITIVE_QUANTITY'
+        WHEN movement_type IN ('OPENING_BALANCE', 'RECEIPT', 'TRANSFER_IN', 'RETURN') AND quantity < 0 THEN 'INVALID_NEGATIVE_QUANTITY'
+            WHEN movement_id IS NULL OR movement_id = '' THEN 'INVALID_OR_MISSING_MOVEMENT_ID'
             WHEN movement_timestamp IS NULL THEN 'INVALID_OR_MISSING_MOVEMENT_TIMESTAMP'
             WHEN sku_id IS NULL THEN 'INVALID_OR_MISSING_SKU_ID'
            

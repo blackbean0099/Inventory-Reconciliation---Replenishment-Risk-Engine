@@ -806,7 +806,6 @@ deduplicated_purchase_orders AS (
         clean_purchase_orders
 )
 select
-row_num,
     po_id,
     is_valid_record,
     exception_reason,
