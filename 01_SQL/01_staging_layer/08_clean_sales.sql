@@ -180,7 +180,7 @@ with fixed_sales as (
                 ',',
                 '.'
             ) AS NUMERIC
-        ) AS unit_price_foreign_raw,
+        ) AS unit_price_foreign,
         --
         SAFE_CAST(
             REPLACE(
@@ -623,7 +623,7 @@ clean_sales as(
             OR warehouse_id = '' THEN FALSE
             WHEN ordered_qty IS NULL THEN FALSE
             WHEN fulfilled_qty IS NULL THEN FALSE
-            WHEN unit_price_foreign_raw IS NULL THEN FALSE
+            WHEN unit_price_foreign IS NULL THEN FALSE
             WHEN discount_amount_foreign IS NULL THEN FALSE
             WHEN currency_code IS NULL
             OR currency_code = '' THEN FALSE
@@ -652,7 +652,7 @@ clean_sales as(
             OR warehouse_id = '' THEN 'MISSING_WAREHOUSE_ID'
             WHEN ordered_qty IS NULL THEN 'INVALID_ORDERED_QUANTITY'
             WHEN fulfilled_qty IS NULL THEN 'INVALID_FULFILLED_QUANTITY'
-            WHEN unit_price_foreign_raw IS NULL THEN 'INVALID_UNIT_PRICE'
+            WHEN unit_price_foreign IS NULL THEN 'INVALID_UNIT_PRICE'
             WHEN discount_amount_foreign IS NULL THEN 'INVALID_DISCOUNT_AMOUNT'
             WHEN currency_code IS NULL
             OR currency_code = '' THEN 'MISSING_CURRENCY_CODE'
@@ -690,7 +690,7 @@ select
     warehouse_id,
     ordered_qty,
     fulfilled_qty,
-    unit_price_foreign_raw,
+    unit_price_foreign,
     discount_amount_foreign,
     currency_code,
     STATUS,
