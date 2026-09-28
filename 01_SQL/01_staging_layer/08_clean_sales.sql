@@ -619,8 +619,7 @@ clean_sales as(
             WHEN order_timestamp IS NULL THEN FALSE
             WHEN sku_id IS NULL
             OR sku_id = '' THEN FALSE
-            WHEN warehouse_id IS NULL
-            OR warehouse_id = '' THEN FALSE
+            WHEN  warehouse_id = '' THEN FALSE
             WHEN ordered_qty IS NULL THEN FALSE
             WHEN fulfilled_qty IS NULL THEN FALSE
             WHEN unit_price_foreign IS NULL THEN FALSE
@@ -648,8 +647,7 @@ clean_sales as(
             WHEN order_timestamp IS NULL THEN 'MISSING_ORDER_TIMESTAMP'
             WHEN sku_id IS NULL
             OR sku_id = '' THEN 'MISSING_SKU_ID'
-            WHEN warehouse_id IS NULL
-            OR warehouse_id = '' THEN 'MISSING_WAREHOUSE_ID'
+            WHEN  warehouse_id = '' THEN 'MISSING_WAREHOUSE_ID'
             WHEN ordered_qty IS NULL THEN 'INVALID_ORDERED_QUANTITY'
             WHEN fulfilled_qty IS NULL THEN 'INVALID_FULFILLED_QUANTITY'
             WHEN unit_price_foreign IS NULL THEN 'INVALID_UNIT_PRICE'
