@@ -423,4 +423,4 @@ ORDER BY rows_quarantined DESC;
 **Aftab Khan**, Data Analyst
 Specializing in SQL data architecture, ETL pipelines, and business intelligence dashboards.
 
-[LinkedIn](www.linkedin.com/in/blackbean0099) · [Portfolio](https://blackbean0099.vercel.app) · [Email](mailto:blackbean0099@gmail.com)
+[LinkedIn](https://www.linkedin.com/in/blackbean0099) · [Portfolio](https://blackbean0099.vercel.app) · [Email](mailto:blackbean0099@gmail.com)
