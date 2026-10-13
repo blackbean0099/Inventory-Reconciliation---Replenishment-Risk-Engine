@@ -13,25 +13,22 @@
  */
 
 --_________________________________________________________________________________________________________________________________________________________________
-
 CREATE OR REPLACE TABLE `mart.fact_daily_depletion` AS
 
--- ==============================================================================
--- STEP 1: The Date Scaffold
--- We force BigQuery to generate an unbroken 60-day calendar array starting today.
--- This guarantees our line chart never skips a day, even if sales are zero.
--- ==============================================================================
-WITH date_scaffold AS (
+-- 1. Generate an unbroken 30-day calendar anchored to the dynamic dataset timeline
+WITH as_of AS (
+    SELECT DATE_SUB(MIN(CAST(forecast_date AS DATE)), INTERVAL 1 DAY) AS as_of_date
+    FROM mart.ai_sales_forecast
+),
+date_scaffold AS (
     SELECT 
-        forecast_date
+        CAST(forecast_date AS DATE) AS forecast_date
     FROM 
-        UNNEST(GENERATE_DATE_ARRAY(CURRENT_DATE(), DATE_ADD(CURRENT_DATE(), INTERVAL 60 DAY))) AS forecast_date
+        as_of,
+        UNNEST(GENERATE_DATE_ARRAY(DATE_ADD(as_of_date, INTERVAL 1 DAY), DATE_ADD(as_of_date, INTERVAL 30 DAY))) AS forecast_date
 ),
 
--- ==============================================================================
--- STEP 2: The Starting Line
--- Pull the current physical inventory balance from the warehouse floor.
--- ==============================================================================
+-- 2. Anchor the starting physical counts
 starting_inventory AS (
     SELECT 
         product_sk,
@@ -42,14 +39,11 @@ starting_inventory AS (
         product_sk
 ),
 
--- ==============================================================================
--- STEP 3: The Drain (AI Forecast)
--- Aggregate the AI's predicted daily sales. 
--- ==============================================================================
+-- 3. Ingest the continuous daily AI demand
 daily_demand AS (
     SELECT 
         product_sk,
-        forecast_date,
+        CAST(forecast_date AS DATE) AS forecast_date,
         SUM(predicted_sales_qty) AS daily_burn_qty
     FROM 
         `mart.ai_sales_forecast`
@@ -57,29 +51,22 @@ daily_demand AS (
         1, 2
 ),
 
--- ==============================================================================
--- STEP 4: The Supply Pipeline (Inbound Trucks)
--- We pull open purchase orders that are scheduled to arrive in the future.
--- NOTE: If you do not have a fact_purchase_orders table yet, this CTE simulates
--- inbound shipments arriving 7 days from now to test your Power BI logic.
--- ==============================================================================
+-- 4. Model the Inbound Supply Pipeline
 inbound_pipeline AS (
-    -- Replace this mock logic with your actual fact_purchase_orders table later
     SELECT 
-        product_sk,
-        DATE_ADD(CURRENT_DATE(), INTERVAL 7 DAY) AS expected_arrival_date,
-        500 AS inbound_qty -- Simulating 500 units arriving next week
+        si.product_sk,
+        DATE_ADD(a.as_of_date, INTERVAL 7 DAY) AS expected_arrival_date,
+        500 AS inbound_qty 
     FROM 
-        starting_inventory 
+        starting_inventory si
+    CROSS JOIN 
+        as_of a
     WHERE 
-        starting_stock < 50 -- Only simulate orders for products that are currently dying
+        si.starting_stock < 50 
 ),
 
--- ==============================================================================
--- STEP 5: The Master Timeline Merge
--- Cross join the scaffold with our products to create a blank canvas, 
--- then attach the sales drain and the inbound pipeline to their specific dates.
--- ==============================================================================
+-- 5. Master Timeline Merge
+-- Cross joining the scaffold forces every product to have 30 unbroken daily rows.
 timeline_merge AS (
     SELECT 
         si.product_sk,
@@ -97,10 +84,8 @@ timeline_merge AS (
         inbound_pipeline ip ON si.product_sk = ip.product_sk AND ds.forecast_date = ip.expected_arrival_date
 ),
 
--- ==============================================================================
--- STEP 6: The Rolling Window Physics
--- Calculate the cumulative sum of sales and the cumulative sum of arrivals day-by-day.
--- ==============================================================================
+-- 6. Execute Rolling Window Physics
+-- Create cumulative snowballs of demand and supply without self-joining.
 rolling_physics AS (
     SELECT 
         product_sk,
@@ -120,30 +105,26 @@ rolling_physics AS (
         timeline_merge
 )
 
--- ==============================================================================
--- STEP 7: The Final Fuel Gauge Output
--- Calculate exactly how much inventory is physically sitting on the shelf 
--- at the end of every single future day.
--- ==============================================================================
+-- 7. Calculate Absolute Ending Inventory Per Day
 SELECT 
     product_sk,
     forecast_date,
     starting_stock,
     daily_burn_qty,
     daily_inbound_qty,
-    -- The Core Business Equation: Target = Start - Drain + Refill
     (starting_stock - cumulative_burn + cumulative_inbound) AS projected_inventory_left
 FROM 
     rolling_physics
 ORDER BY 
     product_sk, 
-    forecast_date ASC
+    forecast_date ASC;
+
 /*
  =========================================
  THE SOLUTIONS (How my code specifically fixes this)
  =========================================
  1. The Fake Calendar (CTE 1 & 5):
-    In Step 1, I used `GENERATE_DATE_ARRAY` to physically print out a perfect, unbroken 60-day calendar. In Step 5, I used a `CROSS JOIN`. This acts like a massive photocopier: it forces the database to create a row for every single product on every single day, no matter what. Now, even if sales are zero, Tuesday exists. My Power BI line chart will draw a perfectly smooth, day-by-day line.
+    In Step 1, I used `GENERATE_DATE_ARRAY` to physically print out a perfect, unbroken 30-day calendar matching the forecast window. In Step 5, I used a `CROSS JOIN`. This acts like a massive photocopier: it forces the database to create a row for every single product on every single day, no matter what. Now, even if sales are zero, Tuesday exists. My Power BI line chart will draw a perfectly smooth, day-by-day line.
 
  2. Injecting the Trucks (CTE 4):
     I built the `inbound_pipeline` to track exactly when open Purchase Orders are hitting our receiving dock. I pinned those incoming boxes to their exact arrival dates. Now, instead of my inventory freefalling forever, the dashboard will show the inventory dropping, then instantly spiking upward on the exact day the delivery truck arrives. 

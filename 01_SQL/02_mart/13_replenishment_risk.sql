@@ -11,11 +11,11 @@
  3. The "Fuel Gauge" Problem:
     My AI gave me daily sales guesses (e.g., "sell 5 on Monday, 3 on Tuesday"). But that doesn't tell me when I run out of stock. I needed a way to simulate a car's fuel tank draining day by day until the exact moment the engine stalls.
  */
-
 --_________________________________________________________________________________________________________________________________________________________________
+
 CREATE OR REPLACE TABLE `mart.replenishment_risk` AS
 
--- 1. Squash physical stock to the Product Grain across all warehouses
+-- 1. Squash physical stock to the Product Grain to eliminate Cartesian multi-warehouse fan-outs
 WITH current_inventory AS (
     SELECT
         product_sk,
@@ -26,7 +26,7 @@ WITH current_inventory AS (
         product_sk
 ),
 
--- 2. Calculate the daily running depletion total
+-- 2. Establish the daily baseline demand
 daily_burn AS (
     SELECT
         product_sk,
@@ -40,7 +40,7 @@ daily_burn AS (
         mart.ai_sales_forecast
 ),
 
--- 3. Model the fuel tank draining day-by-day
+-- 3. Simulate continuous inventory depletion
 depletion_model AS (
     SELECT
         db.product_sk,
@@ -54,7 +54,7 @@ depletion_model AS (
             ON db.product_sk = ci.product_sk
 ),
 
--- 4. Isolate the exact milestone day where inventory hits 0
+-- 4. Identify the exact day the physical stock drops below the zero threshold
 stockout_milestones AS (
     SELECT
         product_sk,
@@ -65,26 +65,39 @@ stockout_milestones AS (
         projected_inventory_left <= 0
     GROUP BY
         product_sk
+),
+
+-- 5. Establish the Dynamic Timeline Anchor
+-- This reads the first generated AI date and steps back exactly 1 day to find "Today".
+as_of AS (
+    SELECT DATE_SUB(MIN(CAST(forecast_date AS DATE)), INTERVAL 1 DAY) AS as_of_date
+    FROM mart.ai_sales_forecast
 )
 
--- 5. Master Report: Retains healthy SKUs and flags immediate stockouts
+-- 6. Master Risk Evaluation Matrix
 SELECT
     ci.product_sk,
-    ci.starting_stock,
-    sm.projected_stockout_date,
-    DATE_DIFF(sm.projected_stockout_date, CURRENT_DATE(), DAY) AS days_until_stockout,
+    -- Defensive Math: Prevent historical data glitches from showing negative physical inventory
+    GREATEST(0, ci.starting_stock) AS starting_stock,
+    CAST(sm.projected_stockout_date AS DATE) AS projected_stockout_date,
+    
+    -- Defensive Math: Floor the days_until_stockout at 0 to prevent -215 day anomalies
+    GREATEST(0, DATE_DIFF(CAST(sm.projected_stockout_date AS DATE), a.as_of_date, DAY)) AS days_until_stockout,
+    
     CASE
         WHEN ci.starting_stock <= 0 THEN 'OUT_OF_STOCK'
-        WHEN DATE_DIFF(sm.projected_stockout_date, CURRENT_DATE(), DAY) <= 14 THEN 'CRITICAL_REORDER'
-        WHEN DATE_DIFF(sm.projected_stockout_date, CURRENT_DATE(), DAY) <= 30 THEN 'WARNING_LOW_STOCK'
+        WHEN GREATEST(0, DATE_DIFF(CAST(sm.projected_stockout_date AS DATE), a.as_of_date, DAY)) <= 14 THEN 'CRITICAL_REORDER'
+        WHEN GREATEST(0, DATE_DIFF(CAST(sm.projected_stockout_date AS DATE), a.as_of_date, DAY)) <= 30 THEN 'WARNING_LOW_STOCK'
         ELSE 'HEALTHY'
     END AS risk_status
 FROM
     current_inventory AS ci
-    LEFT JOIN stockout_milestones AS sm 
-        ON ci.product_sk = sm.product_sk
+CROSS JOIN 
+    as_of AS a
+LEFT JOIN stockout_milestones AS sm 
+    ON ci.product_sk = sm.product_sk
 ORDER BY
-    days_until_stockout ASC
+    days_until_stockout ASC;
 
 --_________________________________________________________________________________________________________________________________________________________________
 /*
