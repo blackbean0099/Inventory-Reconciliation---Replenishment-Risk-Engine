@@ -10,6 +10,8 @@
 
 > **Portfolio note:** All data in this project is **synthetic**. It was generated with `00_Raw_Data/faker.py` and deliberately corrupted to mimic real ERP, WMS, and carrier feeds (mixed date formats, `"N/A"` strings, currency-polluted numbers, duplicate updates, and physically impossible values). The goal is to demonstrate end-to-end analytics engineering: cleaning chaotic records, building a Kimball-style model, forecasting demand, and exposing financial and operational risk to business stakeholders.
 
+![Global Supply Chain Risk Engine dashboard](00_Assets/page_1.png)
+
 ---
 
 ## ⚡ At a Glance
@@ -24,6 +26,7 @@
 | **Analytics** | 2 reconciliation tables + 2 forecast-driven risk models |
 | **ML** | Prophet 30-day demand forecast per product, written back to BigQuery |
 | **BI** | Power BI executive "Command Center" dashboard |
+| **Output** | 185 products scored; 15 flagged for action (5 out of stock, 9 critical, 1 warning) |
 
 ---
 
@@ -63,7 +66,7 @@ Supply-chain decisions depend on reliable information about stock, demand, and i
 4. **SLA accountability (SQL):** Supplier handover delay is separated from carrier transit delay, and missing physical goods are judged before timing.
 5. **Demand forecasting (Python):** Prophet generates a 30-day forecast per product and writes it back to BigQuery.
 6. **Risk and depletion models (SQL):** Cumulative forecast demand is subtracted from physical stock to find the projected stockout date and to simulate a day-by-day "fuel gauge".
-7. **Executive dashboard (Power BI):** A three-page report: a risk overview (revenue at risk, recommended reorder quantity, stockout timeline), a buyer's action table with filters, and a per-SKU forecast and depletion deep-dive.
+7. **Executive dashboard (Power BI):** A three-page report: a risk overview (KPI cards, risk-status donut, and top SKUs by revenue at risk), a buyer's action table with filters, and a per-SKU forecast and depletion deep-dive.
 
 ---
 
@@ -206,8 +209,9 @@ Missing goods are judged before timing, so a short shipment is never mislabeled 
 ### 3. Demand forecast: `02_Python/01_forecast_engine.ipynb`
 
 - Pulls daily fulfilled units per `product_sk` from `mart.fact_sales`.
-- Stretches each product's history to a **continuous daily calendar with zeros filled in**, all the way to one shared end date (the last sale date in the dataset). Prophet therefore sees zero-sales days instead of over-predicting demand, and every product's forecast starts on the same day.
-- Fits one Prophet model per product (yearly and daily seasonality off, since the history is short) and forecasts 30 days with `include_history=False`.
+- Builds each product's history as a **continuous daily calendar from its first sale to its last sale**, with zeros filled in for the gaps inside that window. Days *after* a product's last sale are not turned into zeros, so a product that went quiet because it ran out of stock isn't taught that demand disappeared.
+- Fits one Prophet model per product (yearly and daily seasonality off, since the history is short).
+- Forecasts the **30 days after the dataset's last sale date** for every product, so all forecasts share one timeline and line up with the risk models.
 - Post-processes the output: negative predictions are clipped to 0 and quantities are rounded to whole units.
 - Writes the result to `mart.ai_sales_forecast` with `pandas_gbq`.
 
@@ -217,7 +221,7 @@ Missing goods are judged before timing, so a short shipment is never mislabeled 
 Projected Inventory = Starting Stock − Cumulative Forecast Sales
 ```
 
-Starting stock is summed across all warehouses first (to stop multi-warehouse products from multiplying the forecast). A window function builds the running total of forecast sales, and `MIN(forecast_date)` where projected inventory ≤ 0 gives the first stockout date. The final `LEFT JOIN` from the inventory list guarantees healthy products stay in the report instead of being filtered out.
+Starting stock is summed across all warehouses first (to stop multi-warehouse products from multiplying the forecast). A window function builds the running total of forecast sales, and `MIN(forecast_date)` where projected inventory ≤ 0 gives the first stockout date, measured in days from the dataset's as-of date. The final `LEFT JOIN` from the inventory list guarantees healthy products stay in the report instead of being filtered out. Defensive math keeps the output clean: negative calculated stock is floored at 0, and `days_until_stockout` is floored at 0 (and is `NULL` when no stockout is projected).
 
 | Status | Rule |
 |---|---|
@@ -243,62 +247,89 @@ Projected Inventory = Starting Stock − Cumulative Forecast Sales + Cumulative 
 The report (`03_Power_BI/Supply_Chain_Risk_Command_Center.pbix`) reads from the `mart` dataset only and has three pages. Revenue and reorder metrics are calculated with DAX iterators (`SUMX`) over `replenishment_risk`.
 
 ### 1. Global Supply Chain Risk Engine
-Landing page with KPI cards for **Revenue at Risk**, **Recommended Reorder Qty**, and **Distinct Products**, a risk-status slicer, a projected-stockout timeline per product, and a treemap showing where revenue at risk is concentrated.
+Landing page with KPI cards for **Revenue at Risk**, **Recommended Reorder Qty**, and **Distinct Products**, a risk-status filter, a donut showing the share of products in each risk status, and a ranked bar chart of the top SKUs by revenue at risk (red-to-green gradient).
 
 ![Global Supply Chain Risk Engine](00_Assets/page_1.png)
 
 ### 2. Buyer's Action Center
-Drill-through page for buyers: a filterable table (brand, category, SKU) with current stock, projected stockout date, days left, risk status, recommended reorder quantity, and revenue at risk, plus a risk-status slicer and a days-until-stockout range slider. The "Issue Restock Purchase Order" button is a design placeholder for a Power Automate flow.
+Drill-through page for buyers: a table with brand, category, SKU, current stock, projected stockout date, days left, risk status, recommended reorder quantity, and revenue at risk, plus status buttons and a days-until-stockout slider to focus on the most urgent items. The "Issue Restock Purchase Order" button is a design placeholder for a Power Automate flow.
 
 ![Buyer's Action Center](00_Assets/page_2.png)
 
 ### 3. SKU Deep-Dive: Forecast & Depletion
-Select a SKU to compare the Prophet daily forecast (bars) with the projected inventory curve (line), which falls with forecast sales and steps up on the day a simulated inbound delivery arrives.
+A SKU dropdown, KPI cards (current stock, days until stockout, recommended reorder quantity, 30-day predicted demand), and a combo chart that compares daily forecast demand (bars) with projected stock on the shelf (line and area). The stock curve falls with forecast sales and steps up on the day the simulated delivery arrives. With no SKU selected, the visuals aggregate all products.
 
 ![SKU Deep-Dive](00_Assets/page_3.png)
 
 ### DAX measures
 
 ```dax
-Total 30-Day Forecast = SUM(ai_sales_forecast[predicted_sales_qty])
-
--- Model assumptions, defined once so they can be changed in one place
-Lead Time Days    = 30
-Safety Stock Days = 14
-Avg Unit Price    = COALESCE(AVERAGE(fact_sales[unit_price_foreign]), 150)
+Total 30-Day Forecast = SUM('ai_sales_forecast'[predicted_sales_qty])
 
 Recommended Reorder Qty =
 SUMX(
-    replenishment_risk,
-    VAR AvgDailySales = DIVIDE([Total 30-Day Forecast], 30)
-    VAR TargetStock   = AvgDailySales * ([Lead Time Days] + [Safety Stock Days])
-    VAR OnHand        = MAX(replenishment_risk[starting_stock], 0)
-    RETURN ROUNDUP(MAX(TargetStock - OnHand, 0), 0)
+    'replenishment_risk',
+    VAR LeadTime    = 30
+    VAR SafetyStock = 14
+
+    -- Safe division prevents errors when a product has no forecast
+    VAR AvgDailySales = DIVIDE([Total 30-Day Forecast], 30, 0)
+
+    -- Target stock = average daily demand x total days of coverage needed
+    VAR TargetStock = AvgDailySales * (LeadTime + SafetyStock)
+
+    -- Starting stock never drops below 0 in the math
+    VAR OnHand = MAX('replenishment_risk'[starting_stock], 0)
+
+    -- Reorder = target minus on-hand, floored at 0 and rounded up to whole units
+    RETURN
+        ROUNDUP(MAX(TargetStock - OnHand, 0), 0)
 )
 
 Revenue at Risk =
 SUMX(
-    replenishment_risk,
-    VAR AvgDailySales  = DIVIDE([Total 30-Day Forecast], 30)
-    VAR DaysToStockout = replenishment_risk[days_until_stockout]
-    VAR UncoveredDays  = MAX([Lead Time Days] - MAX(DaysToStockout, 0), 0)
+    'replenishment_risk',
+    VAR LeadTime      = 30
+    VAR UnitPrice     = 150.00
+    VAR AvgDailySales = DIVIDE([Total 30-Day Forecast], 30, 0)
+
+    -- Days left is floored at 0 so negative values can't inflate risk
+    VAR DaysLeft = MAX('replenishment_risk'[days_until_stockout], 0)
+
+    -- If stock lasts longer than the lead time, there are no uncovered days
+    VAR UncoveredDays = MAX(LeadTime - DaysLeft, 0)
+
     RETURN
         IF(
-            replenishment_risk[risk_status] = "HEALTHY" || ISBLANK(DaysToStockout),
+            'replenishment_risk'[risk_status] = "HEALTHY" || ISBLANK(DaysLeft),
             0,
-            UncoveredDays * AvgDailySales * [Avg Unit Price]
+            UncoveredDays * AvgDailySales * UnitPrice
         )
 )
 ```
 
 - **Recommended Reorder Qty** is an order-up-to calculation: forecast daily demand × (lead time + safety days), minus on-hand stock (floored at zero), rounded up to whole units.
-- **Revenue at Risk** is the demand expected during the part of the replenishment lead time that stock does *not* cover, valued at the product's average selling price. Healthy products contribute zero.
-- The measures rely on relationships from `replenishment_risk[product_sk]` to `ai_sales_forecast` and `fact_sales`, so each row's measure calls (context transition) filter to that product only.
+- **Revenue at Risk** is the demand expected during the part of the replenishment lead time that stock does *not* cover, valued at a flat assumed unit price. Healthy products contribute zero.
+- The measures rely on a relationship from `replenishment_risk[product_sk]` to `ai_sales_forecast`, so each row's `[Total 30-Day Forecast]` call (context transition) filters to that product only.
 
 ---
 
+## 📈 Results Snapshot
+
+Illustrative output on the synthetic dataset (the as-of date is the last observed sale day):
+
+| Metric | Result |
+|---|---|
+| Products evaluated | 185 |
+| Products needing action | 15 (5 `OUT_OF_STOCK`, 9 `CRITICAL_REORDER`, 1 `WARNING_LOW_STOCK`), about 8% of the catalog |
+| Recommended reorder quantity | 1,626 units |
+| Revenue at risk | About $155.6K, valued at an assumed flat $150 per unit |
+| Risk concentration | One out-of-stock SKU (`SKU-0025`) accounts for about $109.6K, roughly 70% of the total |
+
+Dollar figures depend on the forecast and the flat-price assumption described below, so they are best read as a relative priority signal for buyers, not as a financial forecast.
+
 <!--
-## 📈 Results Snapshot (uncomment after filling in your real numbers)
+## 🧪 Data Quality Results (uncomment after filling in your real numbers)
 
 | Metric | Value |
 |---|---|
@@ -306,7 +337,6 @@ SUMX(
 | Most common quarantine reason | EXAMPLE_REASON (X rows) |
 | SKU-warehouse pairs flagged `FALSE_STOCK` | X |
 | Total unit discrepancy (WMS vs calculated) | X units |
-| Products in `CRITICAL_REORDER` | X |
 | POs classified `SUPPLIER_LATE` vs `CARRIER_LATE` | X vs X |
 -->
 
@@ -347,26 +377,36 @@ ORDER BY rows_quarantined DESC;
 
 ## ⚠️ Assumptions & Known Limitations
 
-- **Synthetic, static data.** Ingestion is CSV-based. A production version would need an orchestrator (Airflow or dbt) and incremental loads.
+- **Small, synthetic, static data.** The dataset is synthetic with only about two months of daily history, so the forecast demonstrates the pipeline rather than predicting reliably. Ingestion is CSV-based; a production version would need an orchestrator (Airflow or dbt) and incremental loads.
 - **Date assumptions.** Ambiguous dates are read as day-first, and timestamps without a timezone are treated as UTC.
 - **Currency.** Monetary columns stay in their original currency (`*_foreign` plus `currency_code`). `clean_fx_rates` is staged but not yet joined in the mart layer, and it currently rounds rates to 2 decimals, which would need more precision before real conversion.
 - **Staged but unused tables.** `clean_fx_rates`, `clean_policy`, and `clean_fulfillments` are cleaned and ready but not yet consumed by marts.
 - **Product-version grain.** Reconciliation and forecasting are keyed on `product_sk` (a product *version*). For SKUs whose attributes changed over time, a production design would add a durable `sku_id` to facts and reconcile at SKU level.
-- **Forecast scope.** Demand is approximated with *fulfilled* units, which understates true demand during stockouts. There is no train/holdout split or MAPE validation, and products are forecast sequentially in a loop.
+- **Forecast scope.** Demand is approximated with *fulfilled* units, which can understate true demand. Each Prophet model uses a linear trend fitted on that product's own selling window and extended to the shared forecast start, so products whose last sale was long before the dataset's end are sensitive to that trend. Daily predictions are rounded to whole units, which can zero out very slow sellers. There is no train/holdout split or MAPE validation, and products are forecast sequentially in a loop.
 - **Time anchoring.** Because the dataset is static, "today" is the dataset's **as-of date** (the last observed sale day), not `CURRENT_DATE()`. The forecast, stockout dates, and depletion calendar all share that timeline and the same 30-day horizon.
 - **Simulated inbound.** `fact_daily_depletion` uses a hardcoded inbound scenario rather than real open purchase orders.
 - **Telemetry dedupe.** One row is kept per `tracking_id + event_name`, so repeated events of the same type collapse into the latest.
-- **Dashboard assumptions.** Lead time (30 days) and safety stock (14 days) are fixed DAX measures rather than values read from `clean_policy`. Average selling price is taken in source currency until FX conversion is added. The "Issue Restock Purchase Order" button is a design placeholder, not connected to a live ERP.
+- **Dashboard assumptions.** Lead time (30 days), safety stock (14 days), and unit price (a flat $150) are constants inside the DAX measures rather than values read from `clean_policy` or `fact_sales`, so Revenue at Risk is a relative priority signal, not a financial forecast. The "Issue Restock Purchase Order" button is a design placeholder, not connected to a live ERP.
+
+---
+
+## 🧭 Project Journey & Lessons Learned
+
+- **The original goal:** use SQL, Python, and Power BI to show the revenue a business loses when stock runs out and customers walk to a competitor.
+- **The scope grew:** partway through I added Prophet forecasting, which turned a reporting project into a time-series project.
+- **What I learned:** Prophet works best with long, dense history. My synthetic dataset has only about two months of data, so the forecast shows how the pipeline works rather than how accurate it can be.
+- **What I did about it:** instead of hiding the limits, I made the pipeline robust to them. All forecasts share one as-of date, stocked-out products don't learn "zero demand", impossible negative values are floored, and every assumption is documented here.
+- **What I'd do differently:** start with a simple moving-average baseline, generate a longer history, hold out the final weeks to measure forecast error, and only then add Prophet.
 
 ---
 
 ## 🛣️ Roadmap
 
 - Replace the simulated inbound CTE with real open POs (`fact_purchase_orders` minus `fact_receipts`).
-- Apply FX conversion using `clean_fx_rates` so financial metrics are comparable across currencies.
+- Apply FX conversion using `clean_fx_rates`, then replace the flat $150 unit price with product-level prices from `fact_sales`.
 - Use `clean_policy` (reorder point, safety stock, lead time) for dynamic reorder logic instead of the fixed 30-day lead time and 14-day safety stock in the DAX measures.
 - Add dashboard pages for phantom inventory (`recon_inventory`) and supplier-vs-carrier accountability (`recon_lead_times`), which are already modeled in the mart.
-- Add forecast validation (holdout split, MAPE/WAPE) and parallelize per-product training.
+- Add forecast validation (holdout split, MAPE/WAPE), compare against a moving-average baseline, and parallelize per-product training.
 - Orchestrate with Airflow or dbt for lineage, scheduling, and automated tests.
 
 ---
@@ -388,6 +428,8 @@ ORDER BY rows_quarantined DESC;
 
 ```text
 .
+├── 00_Assets/
+│   └── page_1.png, page_2.png, page_3.png   # Dashboard screenshots
 ├── 00_Raw_Data/
 │   ├── faker.py                  # Synthetic data generator
 │   └── raw_*.csv                 # Deliberately messy raw extracts
@@ -398,8 +440,7 @@ ORDER BY rows_quarantined DESC;
 │   ├── 01_forecast_engine.ipynb  # Prophet forecast + BigQuery upload
 │   └── requirements.txt
 └── 03_Power_BI/
-    ├── Supply_Chain_Risk_Command_Center.pbix
-    └── screenshots/
+    └── Supply_Chain_Risk_Command_Center.pbix
 ```
 
 ---
